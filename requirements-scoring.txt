@@ -1,0 +1,10 @@
+-r requirements.txt
+# Install a CUDA-enabled torch/torchvision pair first (see README).
+accelerate==0.34.2
+einops==0.6.1
+huggingface_hub==0.36.2
+peft==0.10.0
+sentencepiece==0.2.3
+timm==0.9.12
+tokenizers==0.15.2
+transformers==4.37.2

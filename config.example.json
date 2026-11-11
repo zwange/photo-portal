@@ -1,0 +1,5 @@
+{
+  "database": "data/photo_catalog.sqlite",
+  "photo_roots": ["photos"],
+  "hidden_folders": []
+}

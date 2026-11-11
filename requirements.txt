@@ -1,0 +1,2 @@
+# Portal and catalog indexer. SQLite and the HTTP server are in Python.
+Pillow==12.3.0
