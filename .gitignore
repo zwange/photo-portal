@@ -38,4 +38,5 @@
 *.bmp
 *.heic
 *.raw
+!/docs/portal-screenshot.png
 .env*

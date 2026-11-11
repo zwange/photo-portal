@@ -5,6 +5,8 @@ collection. It ranks thumbnails with ArtiMuse_PARA and uses a separate
 hierarchical classifier for categories, descriptions, and subject and scene tags.
 The browser can open an original file or reveal it in Windows File Explorer.
 
+![Photo Portal gallery showing scenery photos ranked by percentile, with filters and visual version controls](docs/portal-screenshot.png)
+
 ## Setup on Windows
 
 Use Python 3.12 (regular Python or an Anaconda environment) and Git. The gallery
