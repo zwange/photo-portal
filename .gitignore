@@ -10,6 +10,7 @@
 /para_full_run*/
 /hierarchy_run/
 /visual_full_run/
+/sscd_full_run/
 /server.json
 /para_revision.json
 /vehicle_category_migration_*.json
@@ -29,6 +30,8 @@
 *.pt
 *.bin
 *.ckpt
+*.npy
+*.npz
 *.jpg
 *.jpeg
 *.png

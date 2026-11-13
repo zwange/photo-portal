@@ -48,9 +48,8 @@ check the console or the ignored `server.json` for the actual URL.
    and resumes without redoing successful labels.
 3. Score the catalog with PARA using the steps below. Gallery cards require
    both a successful classification and a score.
-4. Optionally install `requirements-visual.txt` and run
-   `python visual_full.py` to build visual version groups. The gallery uses the
-   latest completed full run. Exact-copy removal is available without this step.
+4. Optionally build [SSCD visual groups](#sscd-visual-grouping).
+   Exact-copy removal is available without this step.
 
 ## ArtiMuse_PARA scoring
 
@@ -84,6 +83,32 @@ one transaction publishes the scores to `photos.artimuse_score` and records
 the model revision in `artimuse_runs`. The staging database retains the previous
 scores for recovery. For a fresh full pass after adding photos, archive the
 finished `para_full_run/` folder before rerunning.
+
+## SSCD visual grouping
+
+[SSCD](https://github.com/facebookresearch/sscd-copy-detection) encodes thumbnails
+as 512-value vectors. Photo Portal compares photos only within the same shoot.
+At the default cosine similarity cutoff of 0.80, every alternate must match its
+keeper directly. The highest PARA score gets first choice of alternates.
+
+Use the CUDA-enabled PyTorch and torchvision pair from the scoring setup above.
+The SSCD job does not need the PARA weights or Ollama running; it uses scores
+already in the catalog.
+
+```powershell
+python -m pip install -r requirements-sscd.txt
+New-Item -ItemType Directory -Force checkpoint_sscd
+curl.exe --fail --location --output checkpoint_sscd/sscd_disc_mixup.torchscript.pt https://dl.fbaipublicfiles.com/sscd-copy-detection/sscd_disc_mixup.torchscript.pt
+python full_sscd.py
+```
+
+The runner checks the checkpoint checksum and stores embeddings and groups in
+separate `sscd_*` tables in the local catalog. Rerun it after an interruption
+to reuse cached embeddings for unchanged thumbnails. See
+`sscd_full_run/status.json` for progress. The gallery uses the latest finished
+SSCD run; before one is available, it falls back to completed hash groups
+created by `visual_full.py` (optional `requirements-visual.txt`).
+**Show versions** reveals alternate frames. Grouping never deletes photos.
 
 ## Browse and query
 

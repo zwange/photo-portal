@@ -1,0 +1,3 @@
+-r requirements.txt
+# Install the CUDA-enabled torch/torchvision pair described in the README first.
+numpy>=1.26,<3

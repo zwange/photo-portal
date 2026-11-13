@@ -110,7 +110,7 @@ def metadata():
         fields=[dict(r) for r in c.execute('PRAGMA table_info(photos_hierarchical)')]
         active=c.execute("SELECT model FROM artimuse_runs WHERE status='complete' ORDER BY finished_at DESC LIMIT 1").fetchone()
         visual_info=visual_catalog()
-        return dict(visual=dict(run_id=visual_info['run_id'],groups=visual_info['groups']),score_model=active['model'].rsplit('/',1)[-1] if active else 'ArtiMuse',score_display='percentile',score_scale=[0,100],app='photo-portal-v1',database=str(DB),total=sum(counts.values()),scored=counts.get('ok',0),labeled=labeled,counts=counts,cameras=cameras,categories=categories,subcategories=subcategories,taxonomy=TAXONOMY,labels=LABELS,roots=[str(r) for r in ROOTS],schema=fields,labeled_only=True)
+        return dict(visual={k:visual_info[k] for k in ('run_id','groups','method','cutoff')},score_model=active['model'].rsplit('/',1)[-1] if active else 'ArtiMuse',score_display='percentile',score_scale=[0,100],app='photo-portal-v1',database=str(DB),total=sum(counts.values()),scored=counts.get('ok',0),labeled=labeled,counts=counts,cameras=cameras,categories=categories,subcategories=subcategories,taxonomy=TAXONOMY,labels=LABELS,roots=[str(r) for r in ROOTS],schema=fields,labeled_only=True)
 
 def fingerprint(row,cache,pending):
     p=Path(row['thumbnail_path']);st=p.stat();key=str(p)
@@ -139,16 +139,26 @@ def keep_best_labels(rows,tagsets):
     return [row for row in rows if row['id'] in ids]
 
 def visual_catalog():
-    """Use the latest completed full run; never a pilot or partially built run."""
+    """Prefer completed SSCD groups, with the earlier hash groups as fallback."""
     with connect() as c:
+        c.execute('BEGIN')
         run=None
-        for r in c.execute("SELECT run_id,summary_json FROM visual_hash_runs WHERE scope='full' ORDER BY created_at DESC"):
-            if json.loads(r['summary_json']).get('state') in ('complete','complete_with_errors'):
-                run=r['run_id'];break
-        if not run:return dict(run_id=None,members={},sizes={},groups=0)
-        members={r['photo_id']:r['group_id'] for r in c.execute('SELECT m.photo_id,m.group_id FROM visual_group_members m JOIN '+HIERARCHY_SOURCE+" ON photos.id=m.photo_id WHERE m.run_id=? AND thumbnail_status='ok' AND analysis_status='ok'",(run,))}
+        cutoff=None
+        table='visual_group_members'
+        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sscd_runs'").fetchone():
+            completed=c.execute("SELECT run_id,cutoff FROM sscd_runs WHERE status IN ('complete','complete_with_errors') ORDER BY finished_at DESC LIMIT 1").fetchone()
+            if completed:
+                run,cutoff=completed
+                table='sscd_group_members'
+        if run is None:
+            for r in c.execute("SELECT run_id,summary_json FROM visual_hash_runs WHERE scope='full' ORDER BY created_at DESC"):
+                if json.loads(r['summary_json']).get('state') in ('complete','complete_with_errors'):
+                    run=r['run_id'];break
+        method='sscd' if table=='sscd_group_members' else 'hash' if run else None
+        if not run:return dict(run_id=None,members={},sizes={},groups=0,method=None,cutoff=None,table=table)
+        members={r['photo_id']:r['group_id'] for r in c.execute('SELECT m.photo_id,m.group_id FROM '+table+' m JOIN '+HIERARCHY_SOURCE+" ON photos.id=m.photo_id WHERE m.run_id=? AND thumbnail_status='ok' AND analysis_status='ok'",(run,))}
         sizes=dict(collections.Counter(members.values()))
-        return dict(run_id=run,members=members,sizes=sizes,groups=sum(n>1 for n in sizes.values()))
+        return dict(run_id=run,members=members,sizes=sizes,groups=sum(n>1 for n in sizes.values()),method=method,cutoff=cutoff,table=table)
 
 def attach_visual(rows,catalog):
     for row in rows:
@@ -174,7 +184,7 @@ def versions(ident):
         if source is None:raise ValueError('Photo not available in the visible labeled collection.')
         group=catalog['members'].get(ident)
         if group is None:rows=[dict(source)]
-        else:rows=[dict(r) for r in c.execute('SELECT '+GALLERY_FIELDS+' FROM '+HIERARCHY_SOURCE+' JOIN visual_group_members m ON m.photo_id=photos.id WHERE m.run_id=? AND m.group_id=? AND thumbnail_status=\'ok\' AND analysis_status=\'ok\' ORDER BY artimuse_score DESC,(width_px*height_px) DESC,id',(catalog['run_id'],group))]
+        else:rows=[dict(r) for r in c.execute('SELECT '+GALLERY_FIELDS+' FROM '+HIERARCHY_SOURCE+' JOIN '+catalog['table']+' m ON m.photo_id=photos.id WHERE m.run_id=? AND m.group_id=? AND thumbnail_status=\'ok\' AND analysis_status=\'ok\' ORDER BY artimuse_score DESC,(width_px*height_px) DESC,id',(catalog['run_id'],group))]
     return dict(photos=[photo(r,scores) for r in attach_visual(rows,catalog)],count=len(rows),source_id=ident,group_id=group,run_id=catalog['run_id'])
 
 def shoot_key(folder):

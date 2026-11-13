@@ -55,6 +55,21 @@ class SmokeTest(unittest.TestCase):
                     self.assertIn('aircraft',server.metadata()['taxonomy']['vehicles'])
                     query=server.custom_query(dict(sql="SELECT artimuse_percentile(artimuse_score) FROM photos ORDER BY id"))
                     self.assertEqual(query['rows'],[[100/3],[200/3],[100]])
+                    self.assertIsNone(server.visual_catalog()['method'])
+                    with closing(sqlite3.connect(database)) as db,db:
+                        db.executescript("""
+                            CREATE TABLE sscd_runs(run_id TEXT,cutoff REAL,status TEXT,finished_at TEXT);
+                            CREATE TABLE sscd_group_members(run_id TEXT,group_id INTEGER,photo_id INTEGER);
+                            INSERT INTO sscd_runs VALUES ('done',0.80,'complete','2026-01-01'),
+                                                         ('newer',0.90,'running',NULL);
+                            INSERT INTO sscd_group_members VALUES ('done',1,2),('done',1,3);
+                        """)
+                    groups=server.metadata()['visual']
+                    self.assertEqual((groups['method'],groups['run_id'],groups['cutoff']),('sscd','done',.8))
+                    self.assertEqual([p['id'] for p in server.versions(2)['photos']],[3,2])
+                    selected=server.gallery(dict(categories=['vehicles'],camera_only=False,deduplicate=False,
+                                                 folder_cap=0,per_category=10))
+                    self.assertEqual([p['id'] for p in selected['photos']],[3,1])
             gc.collect()  # Release SQLite cursors before deleting the Windows fixture.
 
 
