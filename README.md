@@ -88,7 +88,7 @@ finished `para_full_run/` folder before rerunning.
 
 [SSCD](https://github.com/facebookresearch/sscd-copy-detection) encodes thumbnails
 as 512-value vectors. Photo Portal compares photos only within the same shoot.
-At the default cosine similarity cutoff of 0.80, every alternate must match its
+At the default cosine similarity cutoff of 0.75, every alternate must match its
 keeper directly. The highest PARA score gets first choice of alternates.
 
 Use the CUDA-enabled PyTorch and torchvision pair from the scoring setup above.
@@ -109,6 +109,16 @@ to reuse cached embeddings for unchanged thumbnails. See
 SSCD run; before one is available, it falls back to completed hash groups
 created by `visual_full.py` (optional `requirements-visual.txt`).
 **Show versions** reveals alternate frames. Grouping never deletes photos.
+
+To change the cutoff without re-encoding, use a complete cache for the current
+catalog. For example, to update an existing 0.80 run:
+
+```powershell
+python full_sscd.py --regroup-cached 0.75
+```
+
+This saves a new run and keeps the previous groups in SQLite. Regenerate the
+gallery to use the new groups. If the cache is incomplete, run the encoder first.
 
 ## Browse and query
 

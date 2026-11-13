@@ -1,4 +1,5 @@
 """Resume SSCD encoding from SQLite and publish separate within-shoot groups."""
+import argparse
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
@@ -24,7 +25,7 @@ OUT = ROOT / 'sscd_full_run'
 from server import DB, folder_key, shoot_key
 
 BATCH = 32
-CUTOFF = .80
+CUTOFF = .75
 MODEL = ROOT / 'checkpoint_sscd' / 'sscd_disc_mixup.torchscript.pt'
 MODEL_SHA256 = '9f26bd4c848cc19b73d2ae92eea6e04886f61a7b764ceb7a13aeee62e6a6db56'
 SCHEMA = """
@@ -59,7 +60,7 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
-def make_groups(rows, vectors):
+def make_groups(rows, vectors, cutoff=CUTOFF):
     """Assign alternates directly to score-ordered keepers; bound matrix memory."""
     shoots = defaultdict(list)
     for i, row in enumerate(rows):
@@ -79,7 +80,7 @@ def make_groups(rows, vectors):
                 if not active[j]:
                     continue
                 active[j] = False
-                matches = np.flatnonzero(active & (values>=CUTOFF))
+                matches = np.flatnonzero(active & (values>=cutoff))
                 active[matches] = False
                 if matches.size:
                     yield shoot, rows[order[j]]['id'], [
@@ -203,7 +204,47 @@ def run():
             raise
 
 
+def regroup_cached(cutoff):
+    with closing(sqlite3.connect(DB,timeout=60)) as db:
+        db.row_factory=sqlite3.Row
+        db.execute('PRAGMA foreign_keys=ON')
+        version=db.execute('PRAGMA data_version').fetchone()[0]
+        db.execute('BEGIN')
+        encoder=db.execute("""SELECT encoder FROM sscd_runs WHERE status IN
+            ('complete','complete_with_errors') ORDER BY finished_at DESC LIMIT 1""").fetchone()[0]
+        total=db.execute("SELECT COUNT(*) FROM photos WHERE thumbnail_status='ok'").fetchone()[0]
+        cached=db.execute("""SELECT p.id,p.folder_path,p.artimuse_score,e.vector
+            FROM photos p JOIN sscd_embeddings e ON e.photo_id=p.id AND e.thumbnail_path=p.thumbnail_path
+            WHERE p.thumbnail_status='ok' AND e.encoder=? ORDER BY p.id""",(encoder,)).fetchall()
+        db.commit()
+        if not total or len(cached)!=total:
+            raise RuntimeError(f'Cached embeddings cover {len(cached)} of {total} thumbnails')
+        vectors=np.stack([np.frombuffer(r['vector'],dtype='<f4') for r in cached])
+        if not np.isfinite(vectors).all():raise RuntimeError('Invalid cached embeddings')
+        run_id=now()
+        print(f'Grouping {total:,} cached embeddings at {cutoff:g}',flush=True)
+        groups=list(make_groups(cached,vectors,cutoff))
+        collapsed=sum(len(members) for _,_,members in groups)
+        with db:
+            db.execute('BEGIN IMMEDIATE')
+            if db.execute('PRAGMA data_version').fetchone()[0]!=version:
+                raise RuntimeError('Catalog changed during grouping; rerun to use the current snapshot')
+            db.execute("""INSERT INTO sscd_runs(run_id,encoder,cutoff,status,started_at,finished_at,total,encoded,failed,group_count,collapsed)
+                VALUES (?,?,?,'complete',?,?,?,?,0,?,?)""",
+                (run_id,encoder,cutoff,run_id,now(),total,total,len(groups),collapsed))
+            for group_id,(shoot,keeper,members) in enumerate(groups,1):
+                db.execute('INSERT INTO sscd_groups VALUES(?,?,?,?)',(run_id,group_id,shoot,keeper))
+                db.executemany('INSERT INTO sscd_group_members VALUES(?,?,?,?)',
+                    [(run_id,group_id,ident,sim) for ident,sim in [(keeper,1.),*members]])
+        print(json.dumps(dict(run_id=run_id,cutoff=cutoff,total=total,groups=len(groups),collapsed=collapsed)),flush=True)
+
+
 if __name__=='__main__':
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--regroup-cached',type=float,metavar='CUTOFF')
+    args=parser.parse_args()
+    if args.regroup_cached is not None and not 0 < args.regroup_cached <= 1:
+        parser.error('CUTOFF must be greater than 0 and at most 1')
     OUT.mkdir(exist_ok=True)
     with (OUT/'runner.lock').open('a+b') as lock:
         if lock.tell()==0:
@@ -211,4 +252,7 @@ if __name__=='__main__':
             lock.flush()
         lock.seek(0)
         msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
-        run()
+        if args.regroup_cached is None:
+            run()
+        else:
+            regroup_cached(args.regroup_cached)
